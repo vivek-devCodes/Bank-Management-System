@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, ReactNode } from 'react';
+import { authAPI } from '../services/api';
 import { User, AuthState, LoginCredentials, SignupData } from '../types/auth';
 
 interface AuthContextType extends AuthState {
@@ -22,35 +23,49 @@ interface AuthProviderProps {
 }
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
-  const [authState, setAuthState] = useState<AuthState>({
-    user: null,
-    isAuthenticated: false,
-    isLoading: false,
+  const [authState, setAuthState] = useState<AuthState>(() => {
+    // Check for existing auth data in localStorage
+    const token = localStorage.getItem('authToken');
+    const userData = localStorage.getItem('user');
+    
+    if (token && userData) {
+      try {
+        const user = JSON.parse(userData);
+        return {
+          user,
+          isAuthenticated: true,
+          isLoading: false,
+        };
+      } catch (error) {
+        // Clear invalid data
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('user');
+      }
+    }
+    
+    return {
+      user: null,
+      isAuthenticated: false,
+      isLoading: false,
+    };
   });
 
   const login = async (credentials: LoginCredentials): Promise<boolean> => {
     setAuthState(prev => ({ ...prev, isLoading: true }));
     
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // Mock authentication - in real app, this would be an API call
-    if (credentials.email === 'admin@securebank.com' && credentials.password === 'admin123') {
-      const user: User = {
-        id: '1',
-        email: credentials.email,
-        firstName: 'Admin',
-        lastName: 'User',
-        role: 'admin',
-        createdAt: new Date().toISOString(),
-      };
+    try {
+      const response = await authAPI.login(credentials);
       
-      setAuthState({
-        user,
-        isAuthenticated: true,
-        isLoading: false,
-      });
-      return true;
+      if (response.success) {
+        setAuthState({
+          user: response.data.user,
+          isAuthenticated: true,
+          isLoading: false,
+        });
+        return true;
+      }
+    } catch (error) {
+      console.error('Login error:', error);
     }
     
     setAuthState(prev => ({ ...prev, isLoading: false }));
@@ -60,28 +75,32 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const signup = async (data: SignupData): Promise<boolean> => {
     setAuthState(prev => ({ ...prev, isLoading: true }));
     
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    try {
+      const response = await authAPI.register(data);
+      
+      if (response.success) {
+        setAuthState({
+          user: response.data.user,
+          isAuthenticated: true,
+          isLoading: false,
+        });
+        return true;
+      }
+    } catch (error) {
+      console.error('Signup error:', error);
+    }
     
-    // Mock signup - in real app, this would be an API call
-    const user: User = {
-      id: Date.now().toString(),
-      email: data.email,
-      firstName: data.firstName,
-      lastName: data.lastName,
-      role: 'customer',
-      createdAt: new Date().toISOString(),
-    };
-    
-    setAuthState({
-      user,
-      isAuthenticated: true,
-      isLoading: false,
-    });
-    return true;
+    setAuthState(prev => ({ ...prev, isLoading: false }));
+    return false;
   };
 
-  const logout = () => {
+  const logout = async () => {
+    try {
+      await authAPI.logout();
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
+    
     setAuthState({
       user: null,
       isAuthenticated: false,
