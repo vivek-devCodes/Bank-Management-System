@@ -1,15 +1,73 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { CreditCard, Plus, Lock, Unlock, DollarSign } from 'lucide-react';
-import { mockAccounts, mockCustomers } from '../data/mockData';
+import { accountsAPI, customersAPI } from '../services/api';
 import { Account } from '../types/banking';
+import AddAccount from './AddAccount';
+import EditAccount from './EditAccount';
 
 const AccountsView: React.FC = () => {
-  const [accounts] = useState<Account[]>(mockAccounts);
-  const [showAddAccount, setShowAddAccount] = useState(false);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [stats, setStats] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [isAddModalOpen, setAddModalOpen] = useState(false);
+  const [isEditModalOpen, setEditModalOpen] = useState(false);
+  const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
 
-  const getCustomerName = (customerId: string) => {
-    const customer = mockCustomers.find(c => c.id === customerId);
-    return customer ? `${customer.firstName} ${customer.lastName}` : 'Unknown';
+  const refetchData = async () => {
+    setLoading(true);
+    await Promise.all([
+      fetchAccounts(),
+      fetchAccountStats()
+    ]);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    refetchData();
+  }, []);
+
+  const fetchAccounts = async () => {
+    try {
+      const response = await accountsAPI.getAll();
+      if (response.success) {
+        setAccounts(response.data.accounts);
+      }
+    } catch (error) {
+      console.error('Failed to fetch accounts', error);
+    }
+    setLoading(false);
+  };
+
+  const fetchAccountStats = async () => {
+    try {
+      const response = await accountsAPI.getStats();
+      if (response.success) {
+        setStats(response.data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch account stats', error);
+    }
+  };
+
+  const handleAddAccount = () => {
+    setAddModalOpen(true);
+  };
+
+  const handleEditAccount = (account: Account) => {
+    setSelectedAccount(account);
+    setEditModalOpen(true);
+  };
+
+  const handleDeleteAccount = async (id: string) => {
+    if (window.confirm('Are you sure you want to delete this account?')) {
+      try {
+        await accountsAPI.delete(id);
+        fetchAccounts();
+        fetchAccountStats();
+      } catch (error) {
+        console.error('Failed to delete account', error);
+      }
+    }
   };
 
   const getAccountTypeColor = (type: string) => {
@@ -38,7 +96,7 @@ const AccountsView: React.FC = () => {
       </div>
 
       {/* Quick Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8" key={stats?.totalAccounts}>
         <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
           <div className="flex items-center">
             <div className="bg-blue-100 p-3 rounded-lg">
@@ -46,7 +104,7 @@ const AccountsView: React.FC = () => {
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Total Accounts</p>
-              <p className="text-2xl font-bold text-gray-900">{accounts.length}</p>
+              <p className="text-2xl font-bold text-gray-900">{stats?.totalAccounts}</p>
             </div>
           </div>
         </div>
@@ -58,7 +116,7 @@ const AccountsView: React.FC = () => {
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Total Balance</p>
               <p className="text-2xl font-bold text-gray-900">
-                ${accounts.reduce((sum, acc) => sum + acc.balance, 0).toLocaleString()}
+                ${stats?.totalBalance?.toLocaleString()}
               </p>
             </div>
           </div>
@@ -68,11 +126,11 @@ const AccountsView: React.FC = () => {
             <div>
               <p className="text-sm font-medium text-gray-600">Active Accounts</p>
               <p className="text-2xl font-bold text-gray-900">
-                {accounts.filter(acc => acc.status === 'active').length}
+                {stats?.activeAccounts}
               </p>
             </div>
             <button 
-              onClick={() => setShowAddAccount(true)}
+              onClick={handleAddAccount}
               className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
             >
               <Plus className="h-4 w-4" />
@@ -85,7 +143,7 @@ const AccountsView: React.FC = () => {
       {/* Accounts Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
         {accounts.map((account) => (
-          <div key={account.id} className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
+          <div key={account._id} className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-3">
                 <div className="bg-gradient-to-r from-blue-500 to-purple-600 p-3 rounded-lg">
@@ -111,7 +169,7 @@ const AccountsView: React.FC = () => {
               
               <div className="flex justify-between">
                 <span className="text-sm text-gray-600">Account Holder</span>
-                <span className="text-sm font-medium text-gray-900">{getCustomerName(account.customerId)}</span>
+                <span className="text-sm font-medium text-gray-900">{account.customerId.firstName} {account.customerId.lastName}</span>
               </div>
               
               <div className="flex justify-between items-center">
@@ -142,62 +200,36 @@ const AccountsView: React.FC = () => {
             </div>
             
             <div className="mt-6 pt-4 border-t border-gray-100 flex gap-2">
-              <button className="flex-1 bg-blue-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-blue-700 transition-colors">
-                View Details
+              <button onClick={() => handleEditAccount(account)} className="flex-1 bg-blue-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-blue-700 transition-colors">
+                Edit
               </button>
-              <button className="flex-1 border border-gray-300 text-gray-700 px-3 py-2 rounded-lg text-sm hover:bg-gray-50 transition-colors">
-                Manage
+              <button onClick={() => handleDeleteAccount(account._id)} className="flex-1 border border-gray-300 text-gray-700 px-3 py-2 rounded-lg text-sm hover:bg-gray-50 transition-colors">
+                Delete
               </button>
             </div>
           </div>
         ))}
       </div>
 
-      {/* Add Account Modal */}
-      {showAddAccount && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg max-w-md w-full p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Create New Account</h3>
-            <form className="space-y-4">
-              <select className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-                <option value="">Select Customer</option>
-                {mockCustomers.map(customer => (
-                  <option key={customer.id} value={customer.id}>
-                    {customer.firstName} {customer.lastName}
-                  </option>
-                ))}
-              </select>
-              <select className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-                <option value="">Account Type</option>
-                <option value="checking">Checking Account</option>
-                <option value="savings">Savings Account</option>
-                <option value="business">Business Account</option>
-              </select>
-              <input
-                type="number"
-                placeholder="Initial Deposit"
-                min="0"
-                step="0.01"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-              <div className="flex gap-3 justify-end">
-                <button
-                  type="button"
-                  onClick={() => setShowAddAccount(false)}
-                  className="px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  Create Account
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {isAddModalOpen && (
+        <AddAccount
+          onClose={() => setAddModalOpen(false)}
+          onSuccess={() => {
+            setAddModalOpen(false);
+            refetchData();
+          }}
+        />
+      )}
+
+      {isEditModalOpen && selectedAccount && (
+        <EditAccount
+          account={selectedAccount}
+          onClose={() => setEditModalOpen(false)}
+          onSuccess={() => {
+            setEditModalOpen(false);
+            refetchData();
+          }}
+        />
       )}
     </div>
   );

@@ -9,6 +9,7 @@ import CustomersView from './components/CustomersView';
 import AccountsView from './components/AccountsView';
 import TransactionsView from './components/TransactionsView';
 import ReportsView from './components/ReportsView';
+import TransactionsManager from './components/TransactionsManager';
 import { ViewMode } from './types/banking';
 
 type AppView = 'landing' | 'login' | 'signup' | 'dashboard';

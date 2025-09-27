@@ -1,57 +1,36 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
-const db = require('../data/database');
+const { Account, Customer, Transaction } = require('../data/database');
 const { authenticateToken, authorizeRoles } = require('../middleware/auth');
 
 const router = express.Router();
 
 // Get all accounts
-router.get('/', authenticateToken, (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
   try {
     const { customerId, accountType, status, page = 1, limit = 10 } = req.query;
-    let accounts = db.getAccounts();
+    const query = {};
 
-    // Filter by customer ID
-    if (customerId) {
-      accounts = accounts.filter(account => account.customerId === customerId);
-    }
+    if (customerId) query.customerId = customerId;
+    if (accountType) query.accountType = accountType;
+    if (status) query.status = status;
 
-    // Filter by account type
-    if (accountType) {
-      accounts = accounts.filter(account => account.accountType === accountType);
-    }
+    const accounts = await Account.find(query)
+      .populate('customerId', 'firstName lastName email')
+      .limit(limit * 1)
+      .skip((page - 1) * limit)
+      .exec();
 
-    // Filter by status
-    if (status) {
-      accounts = accounts.filter(account => account.status === status);
-    }
-
-    // Pagination
-    const startIndex = (page - 1) * limit;
-    const endIndex = page * limit;
-    const paginatedAccounts = accounts.slice(startIndex, endIndex);
-
-    // Add customer information to each account
-    const accountsWithCustomers = paginatedAccounts.map(account => {
-      const customer = db.getCustomerById(account.customerId);
-      return {
-        ...account,
-        customer: customer ? {
-          firstName: customer.firstName,
-          lastName: customer.lastName,
-          email: customer.email
-        } : null
-      };
-    });
+    const count = await Account.countDocuments(query);
 
     res.json({
       success: true,
       data: {
-        accounts: accountsWithCustomers,
+        accounts,
         pagination: {
           currentPage: parseInt(page),
-          totalPages: Math.ceil(accounts.length / limit),
-          totalItems: accounts.length,
+          totalPages: Math.ceil(count / limit),
+          totalItems: count,
           itemsPerPage: parseInt(limit)
         }
       }
@@ -66,9 +45,9 @@ router.get('/', authenticateToken, (req, res) => {
 });
 
 // Get account by ID
-router.get('/:id', authenticateToken, (req, res) => {
+router.get('/:id', authenticateToken, async (req, res) => {
   try {
-    const account = db.getAccountById(req.params.id);
+    const account = await Account.findById(req.params.id).populate('customerId', 'firstName lastName email');
     
     if (!account) {
       return res.status(404).json({
@@ -77,23 +56,12 @@ router.get('/:id', authenticateToken, (req, res) => {
       });
     }
 
-    // Get customer information
-    const customer = db.getCustomerById(account.customerId);
-    
-    // Get account transactions
-    const transactions = db.getTransactionsByAccountId(req.params.id);
+    const transactions = await Transaction.find({ accountId: req.params.id });
 
     res.json({
       success: true,
       data: {
-        account: {
-          ...account,
-          customer: customer ? {
-            firstName: customer.firstName,
-            lastName: customer.lastName,
-            email: customer.email
-          } : null
-        },
+        account,
         transactions
       }
     });
@@ -114,7 +82,7 @@ router.post('/', [
   body('accountType').isIn(['checking', 'savings', 'business']),
   body('balance').isFloat({ min: 0 }).optional(),
   body('interestRate').isFloat({ min: 0 }).optional()
-], (req, res) => {
+], async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -127,8 +95,7 @@ router.post('/', [
 
     const { customerId, accountType, balance = 0, interestRate } = req.body;
 
-    // Verify customer exists
-    const customer = db.getCustomerById(customerId);
+    const customer = await Customer.findById(customerId);
     if (!customer) {
       return res.status(404).json({
         success: false,
@@ -140,10 +107,11 @@ router.post('/', [
       customerId,
       accountType,
       balance: parseFloat(balance),
+      accountNumber: `****${Math.floor(1000 + Math.random() * 9000)}`,
       ...(interestRate && { interestRate: parseFloat(interestRate) })
     };
 
-    const account = db.createAccount(accountData);
+    const account = await Account.create(accountData);
 
     res.status(201).json({
       success: true,
@@ -165,7 +133,7 @@ router.put('/:id', [
   authorizeRoles('admin', 'teller'),
   body('status').optional().isIn(['active', 'closed', 'frozen']),
   body('interestRate').optional().isFloat({ min: 0 })
-], (req, res) => {
+], async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -176,7 +144,7 @@ router.put('/:id', [
       });
     }
 
-    const account = db.updateAccount(req.params.id, req.body);
+    const account = await Account.findByIdAndUpdate(req.params.id, req.body, { new: true });
     
     if (!account) {
       return res.status(404).json({
@@ -200,9 +168,9 @@ router.put('/:id', [
 });
 
 // Delete account
-router.delete('/:id', authenticateToken, authorizeRoles('admin'), (req, res) => {
+router.delete('/:id', authenticateToken, authorizeRoles('1'), async (req, res) => {
   try {
-    const account = db.deleteAccount(req.params.id);
+    const account = await Account.findByIdAndDelete(req.params.id);
     
     if (!account) {
       return res.status(404).json({
@@ -225,9 +193,9 @@ router.delete('/:id', authenticateToken, authorizeRoles('admin'), (req, res) => 
 });
 
 // Get account balance
-router.get('/:id/balance', authenticateToken, (req, res) => {
+router.get('/:id/balance', authenticateToken, async (req, res) => {
   try {
-    const account = db.getAccountById(req.params.id);
+    const account = await Account.findById(req.params.id);
     
     if (!account) {
       return res.status(404).json({
@@ -239,7 +207,7 @@ router.get('/:id/balance', authenticateToken, (req, res) => {
     res.json({
       success: true,
       data: {
-        accountId: account.id,
+        accountId: account._id,
         accountNumber: account.accountNumber,
         balance: account.balance,
         accountType: account.accountType
@@ -247,6 +215,31 @@ router.get('/:id/balance', authenticateToken, (req, res) => {
     });
   } catch (error) {
     console.error('Get balance error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+});
+
+router.get('/stats', authenticateToken, authorizeRoles('admin', 'teller'), async (req, res) => {
+  try {
+    const totalAccounts = await Account.countDocuments();
+    const activeAccounts = await Account.countDocuments({ status: 'active' });
+    const totalBalance = await Account.aggregate([
+      { $group: { _id: null, total: { $sum: '$balance' } } }
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        totalAccounts,
+        activeAccounts,
+        totalBalance: totalBalance[0]?.total || 0
+      }
+    });
+  } catch (error) {
+    console.error('Get account stats error:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error'

@@ -1,4 +1,4 @@
-const API_BASE_URL = 'http://localhost:5000/api';
+const API_BASE_URL = 'http://localhost:5001/api';
 
 // Get auth token from localStorage
 const getAuthToken = () => {
@@ -168,6 +168,10 @@ export const accountsAPI = {
     });
   },
 
+  getStats: async () => {
+    return apiRequest('/accounts/stats');
+  },
+
   delete: async (id: string) => {
     return apiRequest(`/accounts/${id}`, {
       method: 'DELETE',
@@ -223,6 +227,12 @@ export const transactionsAPI = {
 
   getStats: async () => {
     return apiRequest('/transactions/stats/summary');
+  },
+
+  delete: async (id: string) => {
+    return apiRequest(`/transactions/${id}`, {
+      method: 'DELETE',
+    });
   },
 };
 

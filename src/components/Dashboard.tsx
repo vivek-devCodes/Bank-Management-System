@@ -1,61 +1,91 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   Users, 
   CreditCard, 
   DollarSign, 
   TrendingUp,
   ArrowUpRight,
-  ArrowDownLeft
+  ArrowDownLeft,
+  LogOut
 } from 'lucide-react';
-import { mockCustomers, mockAccounts, mockTransactions } from '../data/mockData';
+import { reportsAPI } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 
 const Dashboard: React.FC = () => {
-  const totalCustomers = mockCustomers.length;
-  const totalAccounts = mockAccounts.length;
-  const totalBalance = mockAccounts.reduce((sum, account) => sum + account.balance, 0);
-  const recentTransactions = mockTransactions.slice(0, 5);
+  const { logout } = useAuth();
+  const [stats, setStats] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
 
-  const stats = [
+  useEffect(() => {
+    const fetchDashboardData = async () => {
+      try {
+        const response = await reportsAPI.getDashboard();
+        if (response.success) {
+          setStats(response.data);
+        }
+      } catch (error) {
+        console.error('Failed to fetch dashboard data', error);
+      }
+      setLoading(false);
+    };
+
+    fetchDashboardData();
+  }, []);
+
+  if (loading) {
+    return <div>Loading...</div>;
+  }
+
+  const statCards = [
     {
       title: 'Total Customers',
-      value: totalCustomers.toLocaleString(),
+      value: stats?.totalCustomers?.toLocaleString(),
       icon: Users,
       color: 'bg-blue-500',
-      change: '+12%'
+      change: '+12%' // This should be dynamic
     },
     {
       title: 'Active Accounts',
-      value: totalAccounts.toLocaleString(),
+      value: stats?.activeAccounts?.toLocaleString(),
       icon: CreditCard,
       color: 'bg-green-500',
-      change: '+8%'
+      change: '+8%' // This should be dynamic
     },
     {
       title: 'Total Deposits',
-      value: `$${totalBalance.toLocaleString()}`,
+      value: `$${stats?.totalBalance?.toLocaleString()}`,
       icon: DollarSign,
       color: 'bg-purple-500',
-      change: '+15%'
+      change: '+15%' // This should be dynamic
     },
     {
       title: 'Monthly Growth',
-      value: '24.5%',
+      value: '24.5%', // This should be dynamic
       icon: TrendingUp,
       color: 'bg-orange-500',
-      change: '+3%'
+      change: '+3%' // This should be dynamic
     }
   ];
 
   return (
     <div className="p-8 bg-gray-50 min-h-screen">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">Dashboard Overview</h1>
-        <p className="text-gray-600 mt-2">Welcome back! Here's what's happening with your bank today.</p>
+      <div className="flex justify-between items-center mb-8">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Dashboard Overview</h1>
+          <p className="text-gray-600 mt-2">Welcome back! Here's what's happening with your bank today.</p>
+        </div>
+        <button
+          onClick={logout}
+          className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors bg-white p-2 rounded-lg shadow-sm border border-gray-100"
+        >
+          <LogOut className="h-5 w-5" />
+          <span>Logout</span>
+        </button>
       </div>
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        {stats.map((stat, index) => {
+        {statCards.map((stat, index) => {
           const Icon = stat.icon;
           return (
             <div key={index} className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 hover:shadow-md transition-shadow">
@@ -84,8 +114,8 @@ const Dashboard: React.FC = () => {
           <p className="text-gray-600 mt-1">Latest activity across all accounts</p>
         </div>
         <div className="divide-y divide-gray-100">
-          {recentTransactions.map((transaction) => (
-            <div key={transaction.id} className="p-6 hover:bg-gray-50 transition-colors">
+          {stats?.recentTransactions?.map((transaction: any) => (
+            <div key={transaction._id} className="p-6 hover:bg-gray-50 transition-colors">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   <div className={`p-2 rounded-lg ${
@@ -112,7 +142,7 @@ const Dashboard: React.FC = () => {
                   <div>
                     <p className="font-medium text-gray-900">{transaction.description}</p>
                     <p className="text-sm text-gray-500">
-                      {new Date(transaction.timestamp).toLocaleDateString()} • Account ****{transaction.accountId}
+                      {new Date(transaction.timestamp).toLocaleDateString()} • Account {transaction.accountId?.accountNumber}
                     </p>
                   </div>
                 </div>

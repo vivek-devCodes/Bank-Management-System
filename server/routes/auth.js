@@ -2,7 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
-const db = require('../data/database');
+const { User, Customer } = require('../data/database');
 const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
@@ -11,7 +11,7 @@ const router = express.Router();
 const generateToken = (user) => {
   return jwt.sign(
     { 
-      id: user.id, 
+      id: user._id, 
       email: user.email, 
       role: user.role 
     },
@@ -37,8 +37,7 @@ router.post('/login', [
 
     const { email, password } = req.body;
 
-    // Find user
-    const user = db.getUserByEmail(email);
+    const user = await User.findOne({ email });
     if (!user) {
       return res.status(401).json({
         success: false,
@@ -46,7 +45,6 @@ router.post('/login', [
       });
     }
 
-    // Check password
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
       return res.status(401).json({
@@ -55,11 +53,9 @@ router.post('/login', [
       });
     }
 
-    // Generate token
     const token = generateToken(user);
 
-    // Return user data (without password)
-    const { password: _, ...userWithoutPassword } = user;
+    const { password: _, ...userWithoutPassword } = user.toObject();
 
     res.json({
       success: true,
@@ -97,8 +93,7 @@ router.post('/register', [
 
     const { email, password, firstName, lastName, phone, dateOfBirth } = req.body;
 
-    // Check if user already exists
-    const existingUser = db.getUserByEmail(email);
+    const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(409).json({
         success: false,
@@ -106,38 +101,28 @@ router.post('/register', [
       });
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create user
-    const userData = {
+    const user = await User.create({
       email,
       password: hashedPassword,
       firstName,
       lastName,
       role: 'customer'
-    };
+    });
 
-    const user = db.createUser(userData);
-
-    // Create customer record
-    const customerData = {
+    const customer = await Customer.create({
       firstName,
       lastName,
       email,
       phone: phone || '',
       address: '',
-      dateOfBirth: dateOfBirth || '',
-      socialSecurityNumber: 'XXX-XX-XXXX'
-    };
+      dateOfBirth: dateOfBirth || null
+    });
 
-    const customer = db.createCustomer(customerData);
-
-    // Generate token
     const token = generateToken(user);
 
-    // Return user data (without password)
-    const { password: _, ...userWithoutPassword } = user;
+    const { password: _, ...userWithoutPassword } = user.toObject();
 
     res.status(201).json({
       success: true,
@@ -158,9 +143,9 @@ router.post('/register', [
 });
 
 // Get current user
-router.get('/me', authenticateToken, (req, res) => {
+router.get('/me', authenticateToken, async (req, res) => {
   try {
-    const user = db.getUserById(req.user.id);
+    const user = await User.findById(req.user.id).select('-password');
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -168,11 +153,9 @@ router.get('/me', authenticateToken, (req, res) => {
       });
     }
 
-    const { password: _, ...userWithoutPassword } = user;
-
     res.json({
       success: true,
-      data: userWithoutPassword
+      data: user
     });
   } catch (error) {
     console.error('Get user error:', error);

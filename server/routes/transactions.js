@@ -1,77 +1,45 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
-const db = require('../data/database');
+const { Transaction, Account } = require('../data/database');
 const { authenticateToken, authorizeRoles } = require('../middleware/auth');
 
 const router = express.Router();
 
 // Get all transactions
-router.get('/', authenticateToken, (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
   try {
     const { accountId, type, status, startDate, endDate, page = 1, limit = 10 } = req.query;
-    let transactions = db.getTransactions();
+    const query = {};
 
-    // Filter by account ID
-    if (accountId) {
-      transactions = transactions.filter(transaction => transaction.accountId === accountId);
-    }
+    if (accountId) query.accountId = accountId;
+    if (type) query.type = type;
+    if (status) query.status = status;
+    if (startDate) query.timestamp = { ...query.timestamp, $gte: new Date(startDate) };
+    if (endDate) query.timestamp = { ...query.timestamp, $lte: new Date(endDate) };
 
-    // Filter by type
-    if (type) {
-      transactions = transactions.filter(transaction => transaction.type === type);
-    }
+    const transactions = await Transaction.find(query)
+      .populate({
+        path: 'accountId',
+        populate: {
+          path: 'customerId',
+          select: 'firstName lastName'
+        }
+      })
+      .sort({ timestamp: -1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit)
+      .exec();
 
-    // Filter by status
-    if (status) {
-      transactions = transactions.filter(transaction => transaction.status === status);
-    }
-
-    // Filter by date range
-    if (startDate) {
-      transactions = transactions.filter(transaction => 
-        new Date(transaction.timestamp) >= new Date(startDate)
-      );
-    }
-    if (endDate) {
-      transactions = transactions.filter(transaction => 
-        new Date(transaction.timestamp) <= new Date(endDate)
-      );
-    }
-
-    // Sort by timestamp (newest first)
-    transactions.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-
-    // Pagination
-    const startIndex = (page - 1) * limit;
-    const endIndex = page * limit;
-    const paginatedTransactions = transactions.slice(startIndex, endIndex);
-
-    // Add account information to each transaction
-    const transactionsWithAccounts = paginatedTransactions.map(transaction => {
-      const account = db.getAccountById(transaction.accountId);
-      const customer = account ? db.getCustomerById(account.customerId) : null;
-      
-      return {
-        ...transaction,
-        account: account ? {
-          accountNumber: account.accountNumber,
-          accountType: account.accountType,
-          customer: customer ? {
-            firstName: customer.firstName,
-            lastName: customer.lastName
-          } : null
-        } : null
-      };
-    });
+    const count = await Transaction.countDocuments(query);
 
     res.json({
       success: true,
       data: {
-        transactions: transactionsWithAccounts,
+        transactions,
         pagination: {
           currentPage: parseInt(page),
-          totalPages: Math.ceil(transactions.length / limit),
-          totalItems: transactions.length,
+          totalPages: Math.ceil(count / limit),
+          totalItems: count,
           itemsPerPage: parseInt(limit)
         }
       }
@@ -86,9 +54,15 @@ router.get('/', authenticateToken, (req, res) => {
 });
 
 // Get transaction by ID
-router.get('/:id', authenticateToken, (req, res) => {
+router.get('/:id', authenticateToken, async (req, res) => {
   try {
-    const transaction = db.getTransactionById(req.params.id);
+    const transaction = await Transaction.findById(req.params.id).populate({
+      path: 'accountId',
+      populate: {
+        path: 'customerId',
+        select: 'firstName lastName email'
+      }
+    });
     
     if (!transaction) {
       return res.status(404).json({
@@ -97,24 +71,9 @@ router.get('/:id', authenticateToken, (req, res) => {
       });
     }
 
-    // Get account and customer information
-    const account = db.getAccountById(transaction.accountId);
-    const customer = account ? db.getCustomerById(account.customerId) : null;
-
     res.json({
       success: true,
-      data: {
-        ...transaction,
-        account: account ? {
-          accountNumber: account.accountNumber,
-          accountType: account.accountType,
-          customer: customer ? {
-            firstName: customer.firstName,
-            lastName: customer.lastName,
-            email: customer.email
-          } : null
-        } : null
-      }
+      data: transaction
     });
   } catch (error) {
     console.error('Get transaction error:', error);
@@ -125,7 +84,7 @@ router.get('/:id', authenticateToken, (req, res) => {
   }
 });
 
-// Create new transaction (deposit/withdrawal)
+// Create new transaction (deposit/withdrawal/transfer)
 router.post('/', [
   authenticateToken,
   authorizeRoles('admin', 'teller'),
@@ -134,7 +93,7 @@ router.post('/', [
   body('amount').isFloat({ min: 0.01 }),
   body('description').notEmpty().trim(),
   body('toAccountId').optional().notEmpty()
-], (req, res) => {
+], async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -147,8 +106,7 @@ router.post('/', [
 
     const { accountId, type, amount, description, toAccountId } = req.body;
 
-    // Verify account exists
-    const account = db.getAccountById(accountId);
+    const account = await Account.findById(accountId);
     if (!account) {
       return res.status(404).json({
         success: false,
@@ -156,7 +114,6 @@ router.post('/', [
       });
     }
 
-    // Check account status
     if (account.status !== 'active') {
       return res.status(400).json({
         success: false,
@@ -164,7 +121,6 @@ router.post('/', [
       });
     }
 
-    // For withdrawals, check sufficient balance
     if (type === 'withdrawal' && account.balance < amount) {
       return res.status(400).json({
         success: false,
@@ -172,7 +128,6 @@ router.post('/', [
       });
     }
 
-    // For transfers, verify destination account
     let toAccount = null;
     if (type === 'transfer') {
       if (!toAccountId) {
@@ -182,7 +137,7 @@ router.post('/', [
         });
       }
       
-      toAccount = db.getAccountById(toAccountId);
+      toAccount = await Account.findById(toAccountId);
       if (!toAccount) {
         return res.status(404).json({
           success: false,
@@ -198,7 +153,6 @@ router.post('/', [
       }
     }
 
-    // Create transaction
     const transactionData = {
       accountId,
       type,
@@ -210,16 +164,19 @@ router.post('/', [
       })
     };
 
-    const transaction = db.createTransaction(transactionData);
+    const transaction = await Transaction.create(transactionData);
 
-    // Update account balances
     if (type === 'deposit') {
-      db.updateAccount(accountId, { balance: account.balance + parseFloat(amount) });
+      account.balance += parseFloat(amount);
+      await account.save();
     } else if (type === 'withdrawal' || type === 'fee') {
-      db.updateAccount(accountId, { balance: account.balance - parseFloat(amount) });
+      account.balance -= parseFloat(amount);
+      await account.save();
     } else if (type === 'transfer') {
-      db.updateAccount(accountId, { balance: account.balance - parseFloat(amount) });
-      db.updateAccount(toAccountId, { balance: toAccount.balance + parseFloat(amount) });
+      account.balance -= parseFloat(amount);
+      toAccount.balance += parseFloat(amount);
+      await account.save();
+      await toAccount.save();
     }
 
     res.status(201).json({
@@ -241,7 +198,7 @@ router.put('/:id/status', [
   authenticateToken,
   authorizeRoles('admin', 'teller'),
   body('status').isIn(['completed', 'pending', 'failed'])
-], (req, res) => {
+], async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -252,7 +209,7 @@ router.put('/:id/status', [
       });
     }
 
-    const transaction = db.updateTransaction(req.params.id, { status: req.body.status });
+    const transaction = await Transaction.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true });
     
     if (!transaction) {
       return res.status(404).json({
@@ -276,42 +233,108 @@ router.put('/:id/status', [
 });
 
 // Get transaction statistics
-router.get('/stats/summary', authenticateToken, authorizeRoles('admin', 'teller'), (req, res) => {
+router.get('/stats/summary', authenticateToken, authorizeRoles('admin', 'teller'), async (req, res) => {
   try {
-    const transactions = db.getTransactions();
-    const accounts = db.getAccounts();
+    const totalTransactions = await Transaction.countDocuments();
+    const totalDeposits = await Transaction.aggregate([
+      { $match: { type: 'deposit' } },
+      { $group: { _id: null, total: { $sum: '$amount' } } }
+    ]);
+    const totalWithdrawals = await Transaction.aggregate([
+      { $match: { type: 'withdrawal' } },
+      { $group: { _id: null, total: { $sum: '$amount' } } }
+    ]);
+    const totalTransfers = await Transaction.aggregate([
+      { $match: { type: 'transfer' } },
+      { $group: { _id: null, total: { $sum: '$amount' } } }
+    ]);
+    const totalBalance = await Account.aggregate([
+      { $group: { _id: null, total: { $sum: '$balance' } } }
+    ]);
 
-    const stats = {
-      totalTransactions: transactions.length,
-      totalDeposits: transactions
-        .filter(t => t.type === 'deposit')
-        .reduce((sum, t) => sum + t.amount, 0),
-      totalWithdrawals: transactions
-        .filter(t => t.type === 'withdrawal')
-        .reduce((sum, t) => sum + t.amount, 0),
-      totalTransfers: transactions
-        .filter(t => t.type === 'transfer')
-        .reduce((sum, t) => sum + t.amount, 0),
-      totalBalance: accounts.reduce((sum, a) => sum + a.balance, 0),
-      transactionsByType: {
-        deposit: transactions.filter(t => t.type === 'deposit').length,
-        withdrawal: transactions.filter(t => t.type === 'withdrawal').length,
-        transfer: transactions.filter(t => t.type === 'transfer').length,
-        fee: transactions.filter(t => t.type === 'fee').length
-      },
-      transactionsByStatus: {
-        completed: transactions.filter(t => t.status === 'completed').length,
-        pending: transactions.filter(t => t.status === 'pending').length,
-        failed: transactions.filter(t => t.status === 'failed').length
+    const transactionsByType = await Transaction.aggregate([
+      { $group: { _id: '$type', count: { $sum: 1 } } }
+    ]);
+
+    const transactionsByStatus = await Transaction.aggregate([
+      { $group: { _id: '$status', count: { $sum: 1 } } }
+    ]);
+
+    const todaysTransactions = await Transaction.countDocuments({
+      timestamp: {
+        $gte: new Date(new Date().setHours(0, 0, 0, 0)),
+        $lt: new Date(new Date().setHours(23, 59, 59, 999))
       }
-    };
+    });
 
     res.json({
       success: true,
-      data: stats
+      data: {
+        totalTransactions,
+        totalDeposits: totalDeposits[0]?.total || 0,
+        totalWithdrawals: totalWithdrawals[0]?.total || 0,
+        totalTransfers: totalTransfers[0]?.total || 0,
+        totalBalance: totalBalance[0]?.total || 0,
+        transactionsByType: transactionsByType.reduce((acc, cur) => ({ ...acc, [cur._id]: cur.count }), {}),
+        transactionsByStatus: transactionsByStatus.reduce((acc, cur) => ({ ...acc, [cur._id]: cur.count }), {}),
+        todaysTransactions
+      }
     });
   } catch (error) {
     console.error('Get transaction stats error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+});
+
+// Delete a transaction
+router.delete('/:id', authenticateToken, authorizeRoles('admin'), async (req, res) => {
+  try {
+    const transaction = await Transaction.findById(req.params.id);
+
+    if (!transaction) {
+      return res.status(404).json({
+        success: false,
+        message: 'Transaction not found'
+      });
+    }
+
+    const account = await Account.findById(transaction.accountId);
+
+    // Revert the transaction amount from the account balance
+    if (account) {
+      switch (transaction.type) {
+        case 'deposit':
+          account.balance -= transaction.amount;
+          break;
+        case 'withdrawal':
+        case 'fee':
+          account.balance += transaction.amount;
+          break;
+        case 'transfer':
+          const toAccount = await Account.findOne({ accountNumber: transaction.toAccount });
+          if (toAccount) {
+            account.balance += transaction.amount;
+            toAccount.balance -= transaction.amount;
+            await toAccount.save();
+          }
+          break;
+        default:
+          break;
+      }
+      await account.save();
+    }
+
+    await transaction.remove();
+
+    res.json({
+      success: true,
+      message: 'Transaction deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete transaction error:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error'

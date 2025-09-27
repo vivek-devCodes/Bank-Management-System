@@ -1,44 +1,45 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
-const db = require('../data/database');
+const { Customer, Account } = require('../data/database');
 const { authenticateToken, authorizeRoles } = require('../middleware/auth');
 
 const router = express.Router();
 
 // Get all customers
-router.get('/', authenticateToken, authorizeRoles('admin', 'teller'), (req, res) => {
+router.get('/', authenticateToken, authorizeRoles('admin', 'teller'), async (req, res) => {
   try {
     const { search, status, page = 1, limit = 10 } = req.query;
-    let customers = db.getCustomers();
+    const query = {};
 
     // Filter by search term
     if (search) {
-      const searchLower = search.toLowerCase();
-      customers = customers.filter(customer => 
-        customer.firstName.toLowerCase().includes(searchLower) ||
-        customer.lastName.toLowerCase().includes(searchLower) ||
-        customer.email.toLowerCase().includes(searchLower)
-      );
+      query.$or = [
+        { firstName: { $regex: search, $options: 'i' } },
+        { lastName: { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } },
+      ];
     }
 
     // Filter by status
     if (status) {
-      customers = customers.filter(customer => customer.status === status);
+      query.status = status;
     }
 
-    // Pagination
-    const startIndex = (page - 1) * limit;
-    const endIndex = page * limit;
-    const paginatedCustomers = customers.slice(startIndex, endIndex);
+    const customers = await Customer.find(query)
+      .limit(limit * 1)
+      .skip((page - 1) * limit)
+      .exec();
+
+    const count = await Customer.countDocuments(query);
 
     res.json({
       success: true,
       data: {
-        customers: paginatedCustomers,
+        customers,
         pagination: {
           currentPage: parseInt(page),
-          totalPages: Math.ceil(customers.length / limit),
-          totalItems: customers.length,
+          totalPages: Math.ceil(count / limit),
+          totalItems: count,
           itemsPerPage: parseInt(limit)
         }
       }
@@ -53,9 +54,9 @@ router.get('/', authenticateToken, authorizeRoles('admin', 'teller'), (req, res)
 });
 
 // Get customer by ID
-router.get('/:id', authenticateToken, (req, res) => {
+router.get('/:id', authenticateToken, async (req, res) => {
   try {
-    const customer = db.getCustomerById(req.params.id);
+    const customer = await Customer.findById(req.params.id);
     
     if (!customer) {
       return res.status(404).json({
@@ -65,7 +66,7 @@ router.get('/:id', authenticateToken, (req, res) => {
     }
 
     // Get customer's accounts
-    const accounts = db.getAccountsByCustomerId(req.params.id);
+    const accounts = await Account.find({ customerId: req.params.id });
 
     res.json({
       success: true,
@@ -94,7 +95,7 @@ router.post('/', [
   body('address').notEmpty().trim(),
   body('dateOfBirth').isISO8601().toDate(),
   body('socialSecurityNumber').notEmpty().trim()
-], (req, res) => {
+], async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -106,7 +107,7 @@ router.post('/', [
     }
 
     const customerData = req.body;
-    const customer = db.createCustomer(customerData);
+    const customer = await Customer.create(customerData);
 
     res.status(201).json({
       success: true,
@@ -132,7 +133,7 @@ router.put('/:id', [
   body('phone').optional().notEmpty().trim(),
   body('address').optional().notEmpty().trim(),
   body('status').optional().isIn(['active', 'inactive', 'suspended'])
-], (req, res) => {
+], async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -143,7 +144,7 @@ router.put('/:id', [
       });
     }
 
-    const customer = db.updateCustomer(req.params.id, req.body);
+    const customer = await Customer.findByIdAndUpdate(req.params.id, req.body, { new: true });
     
     if (!customer) {
       return res.status(404).json({
@@ -167,9 +168,9 @@ router.put('/:id', [
 });
 
 // Delete customer
-router.delete('/:id', authenticateToken, authorizeRoles('admin'), (req, res) => {
+router.delete('/:id', authenticateToken, authorizeRoles('admin'), async (req, res) => {
   try {
-    const customer = db.deleteCustomer(req.params.id);
+    const customer = await Customer.findByIdAndDelete(req.params.id);
     
     if (!customer) {
       return res.status(404).json({
