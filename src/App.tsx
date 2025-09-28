@@ -3,23 +3,38 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import LandingPage from './components/LandingPage';
 import LoginPage from './components/LoginPage';
 import SignupPage from './components/SignupPage';
+
+// Admin Components
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import CustomersView from './components/CustomersView';
 import AccountsView from './components/AccountsView';
 import TransactionsView from './components/TransactionsView';
 import ReportsView from './components/ReportsView';
-import TransactionsManager from './components/TransactionsManager';
+
+// Customer Components
+import CustomerSidebar, { CustomerViewMode } from './components/customer/CustomerSidebar';
+import CustomerDashboard from './components/customer/CustomerDashboard';
+import CustomerAccounts from './components/customer/CustomerAccounts';
+import CustomerTransfers from './components/customer/CustomerTransfers';
+import CustomerProfile from './components/customer/CustomerProfile';
+import CustomerStatements from './components/customer/CustomerStatements';
+
 import { ViewMode } from './types/banking';
 
 type AppView = 'landing' | 'login' | 'signup' | 'dashboard';
 
 const AppContent: React.FC = () => {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   const [appView, setAppView] = useState<AppView>('landing');
+  
+  // Admin views
   const [currentView, setCurrentView] = useState<ViewMode>('dashboard');
+  
+  // Customer views
+  const [customerView, setCustomerView] = useState<CustomerViewMode>('dashboard');
 
-  const renderCurrentView = () => {
+  const renderAdminView = () => {
     switch (currentView) {
       case 'dashboard':
         return <Dashboard />;
@@ -36,16 +51,46 @@ const AppContent: React.FC = () => {
     }
   };
 
-  // If user is authenticated, show the banking dashboard
+  const renderCustomerView = () => {
+    switch (customerView) {
+      case 'dashboard':
+        return <CustomerDashboard />;
+      case 'accounts':
+        return <CustomerAccounts />;
+      case 'transfers':
+        return <CustomerTransfers />;
+      case 'profile':
+        return <CustomerProfile />;
+      case 'statements':
+        return <CustomerStatements />;
+      default:
+        return <CustomerDashboard />;
+    }
+  };
+
+  // If user is authenticated, show appropriate dashboard based on role
   if (isAuthenticated) {
-    return (
-      <div className="flex h-screen bg-gray-50">
-        <Sidebar currentView={currentView} onViewChange={setCurrentView} />
-        <div className="flex-1 overflow-auto">
-          {renderCurrentView()}
+    // Show customer portal for customers, admin dashboard for admin/teller
+    if (user?.role === 'customer') {
+      return (
+        <div className="flex h-screen bg-gray-50">
+          <CustomerSidebar currentView={customerView} onViewChange={setCustomerView} />
+          <div className="flex-1 overflow-auto">
+            {renderCustomerView()}
+          </div>
         </div>
-      </div>
-    );
+      );
+    } else {
+      // Admin/Teller dashboard
+      return (
+        <div className="flex h-screen bg-gray-50">
+          <Sidebar currentView={currentView} onViewChange={setCurrentView} />
+          <div className="flex-1 overflow-auto">
+            {renderAdminView()}
+          </div>
+        </div>
+      );
+    }
   }
 
   // Show appropriate view based on current state
